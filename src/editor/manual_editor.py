@@ -28,10 +28,33 @@ class ManualEditor:
     def add_row(self, table_name: str, row_data: Dict[str, str]) -> None:
         """Add a new row to the table."""
         table = self._get_table(table_name)
-        self.warehouse.schema.validate_row(row_data)
+        
+        # Create a complete row dict with missing values for non-present columns
+        complete_row = {}
+        for col in self.warehouse.schema.column_defs:
+            if col in row_data:
+                complete_row[col] = row_data[col]
+            else:
+                coldef = self.warehouse.schema.column_defs[col]
+                if coldef.allow_missing:
+                    complete_row[col] = self.warehouse.schema.missing_code
+                else:
+                    # For required columns not in subset, use mode or raise error
+                    from src.stats.categorical_stats import categorical_stats
+                    full_table = self.warehouse.get_table(table_name.split('_')[0])  # Get original table
+                    stats = categorical_stats(full_table.df[col], self.warehouse.schema, col)
+                    modes = stats.get('mode', [])
+                    if not modes:
+                        raise ValueError(f"No mode found for required column '{col}'")
+                    complete_row[col] = modes[0]
+
+        # Validate the complete row
+        self.warehouse.schema.validate_row(complete_row)
+        
+        # Add only the subset columns
         new_idx = len(table)
-        for col, val in row_data.items():
-            table.edit_value(new_idx, col, val)
+        for col in table.df.columns:
+            table.edit_value(new_idx, col, complete_row[col])
 
     def delete_row(self, table_name: str, row_idx: int) -> None:
         """Delete a row from the table by index."""

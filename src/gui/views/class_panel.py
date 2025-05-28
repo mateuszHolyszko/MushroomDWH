@@ -8,13 +8,13 @@ from PyQt5.QtWidgets import (
 from typing import List, Dict
 from PyQt5.QtCore import Qt
 from src.core.warehouse import DataWarehouse
+from src.core.table_store import TableStore
 
 class ClassPanel(QWidget):
     """Panel for training and evaluating KNN classifier on mushroom data."""
-    def __init__(self, warehouse: DataWarehouse, parent=None):
+    def __init__(self, table_store: TableStore, parent=None):
         super().__init__(parent)
-        self.warehouse = warehouse
-        self.current_table = None
+        self.table_store = table_store  
         self.init_ui()
 
     def init_ui(self):
@@ -95,14 +95,14 @@ class ClassPanel(QWidget):
 
     def set_table(self, table_name: str):
         """Update controls when a new table is selected."""
-        self.current_table = table_name
         self.feature_list.clear()
-        self.results_form.removeRow(0)
+        if self.results_form.rowCount() > 0:
+            self.results_form.removeRow(0)
         self.train_btn.setEnabled(False)
-        self.save_model_btn.setEnabled(False)  # Add this line
+        self.save_model_btn.setEnabled(False)
         
         if table_name:
-            table = self.warehouse.get_table(table_name)
+            table = self.table_store.get_active_table()
             # Add all columns except 'class' as potential features
             for col in table.df.columns:
                 if col != 'class':
@@ -128,11 +128,11 @@ class ClassPanel(QWidget):
         # Create ComboBox for each feature
         for feature in features:
             combo = QComboBox()
-            coldef = self.warehouse.schema.column_defs[feature]
+            coldef = self.table_store.schema.column_defs[feature]
             # Add human-readable labels
             for code in sorted(coldef.codes):
                 label = coldef.labels[code]
-                combo.addItem(label, userData=code)  # Store code as item data
+                combo.addItem(label, userData=code)
             self.feature_inputs[feature] = combo
             # Insert new rows at the beginning, before the button
             layout.insertRow(layout.rowCount()-2, f"{feature}:", combo)

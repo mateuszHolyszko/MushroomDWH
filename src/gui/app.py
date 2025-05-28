@@ -9,11 +9,14 @@ if project_root not in sys.path:
 import sys
 from PyQt5.QtWidgets import QApplication
 from src.gui.views.main_window import MainWindow
+from src.core.table_store import TableStore
 
 
 def main():
+    table_store = TableStore()
+    
     app = QApplication(sys.argv)
-    window = MainWindow()
+    window = MainWindow(table_store)
     window.show()
     sys.exit(app.exec_())
 

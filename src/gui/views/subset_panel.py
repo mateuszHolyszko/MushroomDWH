@@ -14,16 +14,15 @@ from PyQt5.QtWidgets import (
 )
 from src.core.warehouse import DataWarehouse
 from src.core.data_table import DataTable
+from src.core.table_store import TableStore
 
 class SubsetPanel(QWidget):
     """
     UI panel for extracting subsets from a loaded table.
-    Supports row slicing, column selection, and value-based filters.
     """
-    def __init__(self, warehouse: DataWarehouse, parent=None):
+    def __init__(self, table_store: TableStore, parent=None):
         super().__init__(parent)
-        self.warehouse = warehouse
-        self.current_table = None
+        self.table_store = table_store
         self.init_ui()
 
     def init_ui(self):
@@ -83,7 +82,6 @@ class SubsetPanel(QWidget):
 
     def set_table(self, table_name: str):
         """Populate controls when a new table is loaded."""
-        self.current_table = table_name
         if table_name is None:
             # Clear all controls
             self.col_list.clear()
@@ -98,7 +96,7 @@ class SubsetPanel(QWidget):
             self.save_btn.setEnabled(False)
             return
         
-        table = self.warehouse.get_table(table_name)
+        table = self.table_store.get_active_table()
         n = len(table)
         
         # Update row controls
@@ -123,19 +121,20 @@ class SubsetPanel(QWidget):
 
     def update_filter_values(self):
         """Update available values for the selected filter column."""
-        if not self.current_table or self.filter_col.currentText() == '':
+        if not self.table_store.active_table_name or self.filter_col.currentText() == '':
             self.filter_values.clear()
             return
             
-        table = self.warehouse.get_table(self.current_table)
+        table = self.table_store.get_active_table()
         col = self.filter_col.currentText()
-        coldef = self.warehouse.schema.column_defs[col]
+        coldef = self.table_store.schema.column_defs[col]
         
         # Get unique values and map to labels
         unique_codes = sorted(table.df[col].unique())
         labeled_values = []
         for code in unique_codes:
-            if code == self.warehouse.schema.missing_code:
+            # Use table_store.schema instead of warehouse.schema
+            if code == self.table_store.schema.missing_code:
                 if coldef.allow_missing:
                     labeled_values.append(('Missing', code))
             else:

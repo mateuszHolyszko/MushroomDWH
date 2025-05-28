@@ -24,6 +24,9 @@ class ContextMenuController:
         tv.customContextMenuRequested.connect(self.on_context_menu)
 
     def on_context_menu(self, pos):
+        if not self.main.table_store.active_table_name:
+            return
+
         tv = self.main.table_view
         sel_model = tv.selectionModel()
         indexes = sel_model.selectedIndexes()
@@ -39,16 +42,14 @@ class ContextMenuController:
         replace_act = menu.addAction("Replace Value in Column")
 
         action = menu.exec_(tv.viewport().mapToGlobal(pos))
-        # Use working table name if available, otherwise use main table
-        table_name = self.main.working_table_name or self.main.current_table_name
 
         if action == insert_act:
             # Determine insertion index (before first selected row, or append)
             insert_at = rows[0] if rows else None
 
             # Get table and schema
-            table = self.main.warehouse.get_table(table_name)
-            schema = self.main.warehouse.schema
+            table = self.main.table_store.get_active_table()
+            schema = self.main.table_store.schema
 
             # Build a default row: mode for non‐missing columns, '?' for allow_missing
             from src.stats.categorical_stats import categorical_stats
@@ -66,7 +67,10 @@ class ContextMenuController:
                     row_data[col] = modes[0]
 
             # Append the new row
-            self.main.manual_editor.add_row(table_name, row_data)
+            self.main.manual_editor.add_row(
+                self.main.table_store.active_table_name, 
+                row_data
+            )
 
             # Reorder so the new row appears at insert_at (or stay at end)
             df = table.df
@@ -81,10 +85,10 @@ class ContextMenuController:
             # Apply reorder and reset index
             reordered = df.iloc[order].reset_index(drop=True)
             table._df = reordered
-            self.main.warehouse.tables[table_name] = table
+            self.main.table_store.warehouse.tables[self.main.table_store.active_table_name] = table
 
-            # Refresh view and delegates
-            self._refresh_view()
+            # Refresh view through table_store
+            self.main.table_store.set_active_table(self.main.table_store.active_table_name)
 
             # Auto‐select the newly inserted row
             self.main.table_view.selectRow(final_idx)
@@ -93,34 +97,30 @@ class ContextMenuController:
         elif action == delete_act:
             # Delete selected rows
             for r in reversed(rows):
-                self.main.manual_editor.delete_row(table_name, r)
-            self._refresh_view()
+                self.main.manual_editor.delete_row(
+                    self.main.table_store.active_table_name, 
+                    r
+                )
+            # Refresh through table_store
+            self.main.table_store.set_active_table(self.main.table_store.active_table_name)
 
         elif action == replace_act and cols:
             # Single-column replace
             col_idx = cols[0]
-            col_name = self.main.warehouse.get_table(table_name).df.columns[col_idx]
-            dlg = ValuePromptDialog(col_name, self.main.warehouse.schema, parent=tv)
+            col_name = self.main.table_store.get_active_table().df.columns[col_idx]
+            dlg = ValuePromptDialog(col_name, self.main.table_store.schema, parent=tv)
             vals = dlg.get_values()
             if vals:
                 old, new = vals
-                self.main.automatic_editor.replace_values(table_name, col_name, old, new)
-            self._refresh_view()
+                self.main.automatic_editor.replace_values(
+                    self.main.table_store.active_table_name,
+                    col_name, 
+                    old, 
+                    new
+                )
+            # Refresh through table_store
+            self.main.table_store.set_active_table(self.main.table_store.active_table_name)
 
     def _refresh_view(self):
-        # Use working table if available
-        table_name = self.main.working_table_name or self.main.current_table_name
-        table = self.main.warehouse.get_table(table_name)
-        model = TableModel(table, self.main.warehouse.schema)
-        self.main.table_view.setModel(model)
-        
-        # Reapply delegates
-        for idx, col_name in enumerate(table.df.columns):
-            delegate = ComboBoxDelegate(col_name, self.main.warehouse.schema, 
-                                      parent=self.main.table_view)
-            self.main.table_view.setItemDelegateForColumn(idx, delegate)
-            
-        # Update panels with correct table name
-        self.main.stats_panel.set_table(table_name)
-        self.main.subset_panel.set_table(table_name)
-        self.main.status_bar.showMessage("Table updated")
+        """No longer needed - table_store observer pattern handles updates"""
+        pass

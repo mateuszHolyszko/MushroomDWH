@@ -20,21 +20,22 @@ from src.gui.views.subset_panel import SubsetPanel
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, table_store):
         super().__init__()
         self.setWindowTitle("Mushroom Data Warehouse")
         self.resize(1000, 700)
 
-        # Backend data warehouse
-        self.warehouse = DataWarehouse()
-        self.current_table_name = None
-        self.working_table_name = None
-        self.manual_editor = ManualEditor(self.warehouse)
-        self.automatic_editor = AutomaticEditor(self.warehouse)
+        # Use table_store instead of direct warehouse
+        self.table_store = table_store
+        self.table_store.add_observer(self._on_table_changed)
+        
+        # These editors should use table_store's warehouse
+        self.manual_editor = ManualEditor(self.table_store.warehouse)
+        self.automatic_editor = AutomaticEditor(self.table_store.warehouse)
 
         self._init_ui()
 
-        # hook up right‑click context menu for the table:
+        # Initialize controllers with self
         from src.gui.controllers.context_menu_ctrl import ContextMenuController
         self.context_ctrl = ContextMenuController(self)
         from src.gui.controllers.subset_ctrl import SubsetController
@@ -72,23 +73,16 @@ class MainWindow(QMainWindow):
 
         # 2) Statistics tab
         from src.gui.views.stats_panel import StatsPanel
-        self.stats_panel = StatsPanel(self.warehouse)
+        self.stats_panel = StatsPanel(self.table_store)
         self.tabs.addTab(self.stats_panel, "Statistics")
 
         # 3) Subset tab
-        self.subset_panel = SubsetPanel(self.warehouse)
+        self.subset_panel = SubsetPanel(self.table_store)
         self.tabs.addTab(self.subset_panel, "Subset")
 
-        # 4) Edit tab (placeholder)
-        edit_tab = QWidget()
-        edit_layout = QVBoxLayout()
-        edit_layout.addWidget(QLabel("Edit panel (placeholder)"))
-        edit_tab.setLayout(edit_layout)
-        self.tabs.addTab(edit_tab, "Edit")
-
-        # 5) Classify tab (placeholder)
+        # 4) Classify tab (
         from src.gui.views.class_panel import ClassPanel
-        self.class_panel = ClassPanel(self.warehouse)
+        self.class_panel = ClassPanel(self.table_store)
         self.tabs.addTab(self.class_panel, "Classify")
 
         # Set up status bar
@@ -99,49 +93,36 @@ class MainWindow(QMainWindow):
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Mushroom Data File",
-            "",
+            self, "Open Mushroom Data File", "",
             "Data Files (*.data *.csv);;All Files (*)"
         )
         if not path:
             return
         try:
-            # Load into warehouse
-            self.current_table_name = 'mushrooms'
-            self.warehouse.load_table(self.current_table_name, path)
-            table = self.warehouse.get_table(self.current_table_name)
-            # Create and set model
-            model = TableModel(table, self.warehouse.schema)
-            self.table_view.setModel(model)
-            # Apply delegates per column
-            for col_idx, col_name in enumerate(table.df.columns):
-                delegate = ComboBoxDelegate(col_name, self.warehouse.schema, parent=self.table_view)
-                self.table_view.setItemDelegateForColumn(col_idx, delegate)
-            # Notify stats panel of new table
-            self.stats_panel.set_table(self.current_table_name)
-            self.subset_panel.set_table(self.current_table_name)
-            self.class_panel.set_table(self.current_table_name)
-            # Update status bar
-            self.status_bar.showMessage(f"Loaded {self.current_table_name} from {path}")
-            self.status_bar.showMessage(f"Loaded {len(table.df)} rows from {path}")
+            # Load into table_store
+            table_name = 'mushrooms'
+            self.table_store.warehouse.load_table(table_name, path)
+            self.table_store.set_active_table(table_name)
+            
+            # Model and delegates will be handled by _on_table_changed
+            self.status_bar.showMessage(f"Loaded {len(self.table_store.get_active_table().df)} rows from {path}")
         except Exception as e:
             QMessageBox.critical(self, "Error Loading File", str(e))
 
     def save_file(self):
-        if not self.current_table_name:
+        if not self.table_store.active_table_name:
             QMessageBox.warning(self, "No Table", "No data loaded to save.")
             return
+            
         path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Mushroom Data File",
-            "",
+            self, "Save Mushroom Data File", "",
             "Data Files (*.data *.csv);;All Files (*)"
         )
         if not path:
             return
+            
         try:
-            self.warehouse.save_table(self.current_table_name, path)
+            self.table_store.warehouse.save_table(self.table_store.active_table_name, path)
             QMessageBox.information(self, "Saved", f"Data saved to {path}")
             self.status_bar.showMessage(f"Data saved to {path}")
         except Exception as e:
@@ -164,32 +145,49 @@ class MainWindow(QMainWindow):
         replace_action = menu.addAction("Replace Value in Column")
 
         action = menu.exec_(self.table_view.viewport().mapToGlobal(pos))
-        # Use working table if available, otherwise use main table
-        table_name = self.working_table_name or self.current_table_name
+
+        if not self.table_store.active_table_name:
+            return
 
         if action == insert_action:
-            row = rows[0] if rows else len(self.warehouse.get_table(table_name).df)
-            self.manual_editor.add_row(table_name, {})  # prompt in real impl
+            row = rows[0] if rows else len(self.table_store.get_active_table().df)
+            self.manual_editor.add_row(self.table_store.active_table_name, {})
         elif action == delete_action and rows:
             for r in reversed(rows):
-                self.manual_editor.delete_row(table_name, r)
+                self.manual_editor.delete_row(self.table_store.active_table_name, r)
         elif action == replace_action and cols:
-            col = self.warehouse.get_table(table_name).df.columns[cols[0]]
-            # In a real app, prompt for old/new values here
-            self.automatic_editor.replace_values(table_name, col, 'old', 'new')
+            col = self.table_store.get_active_table().df.columns[cols[0]]
+            self.automatic_editor.replace_values(self.table_store.active_table_name, col, 'old', 'new')
 
-        # Refresh view
-        table = self.warehouse.get_table(table_name)
-        model = TableModel(table, self.warehouse.schema)
+        # No need to manually refresh - table_store observer will handle it
+        # TableStore will notify observers which triggers _on_table_changed
+        # Force a refresh by re-setting the active table
+        self.table_store.set_active_table(self.table_store.active_table_name)
+
+    def _on_table_changed(self, table_name: str):
+        """Handle updates from the table store."""
+        if not table_name:
+            return
+            
+        table = self.table_store.get_active_table()
+        
+        # Update table view
+        model = TableModel(table, self.table_store.schema)
         self.table_view.setModel(model)
-        # Reapply delegates
+        
+        # Apply delegates
         for idx, col_name in enumerate(table.df.columns):
-            delegate = ComboBoxDelegate(col_name, self.warehouse.schema, parent=self.table_view)
+            delegate = ComboBoxDelegate(col_name, self.table_store.schema, 
+                                      parent=self.table_view)
             self.table_view.setItemDelegateForColumn(idx, delegate)
-        # Update panels with correct table name
+            
+        # Update all panels
         self.stats_panel.set_table(table_name)
         self.subset_panel.set_table(table_name)
-        self.status_bar.showMessage("Table updated")
+        self.class_panel.set_table(table_name)
+        
+        # Update status
+        self.status_bar.showMessage(f"Active table: {table_name}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

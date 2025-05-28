@@ -4,6 +4,7 @@ from PyQt5.QtCore import QTimer
 from src.classification.knn_classifier import KNNClassifier
 from src.preprocessing.encoder import LabelEncoder
 from src.gui.views.class_panel import ClassPanel
+from src.core.table_store import TableStore
 import pickle
 from dataclasses import dataclass
 from typing import Dict, List
@@ -24,25 +25,33 @@ class ClassController:
     def __init__(self, main_window):
         self.main = main_window
         self.panel: ClassPanel = main_window.class_panel
+        self.table_store = main_window.table_store
         
-        # Connect signals
-        self.panel.train_btn.clicked.connect(self.on_train)
-        self.panel.predict_btn.clicked.connect(self.on_predict)
-        
-        # Add connections for save/load
-        self.panel.save_model_btn.clicked.connect(self.on_save_model)
-        self.panel.load_model_btn.clicked.connect(self.on_load_model)
-        
-        self.selected_features = None
-        self.feature_encoders = {}
+        # Model state
         self.classifier = None
-        self.y_encoder = None
+        self.feature_encoders = {}
+        self.y_encoder = None 
+        self.selected_features = None
+        self.train_accuracy = None
+        self.test_accuracy = None
+
+        # Connect signals after all attributes are initialized
+        self._connect_signals()
+
+    def _connect_signals(self):
+        """Connect all panel signals to their handlers."""
+        self.panel.train_btn.clicked.connect(self.on_train)
+        # Only connect save/load if they exist
+        if hasattr(self.panel, 'save_model_btn'):
+            self.panel.save_model_btn.clicked.connect(self.on_save_model)
+        if hasattr(self.panel, 'load_model_btn'):
+            self.panel.load_model_btn.clicked.connect(self.on_load_model)
+        if hasattr(self.panel, 'predict_btn'):
+            self.panel.predict_btn.clicked.connect(self.on_predict)
 
     def on_train(self):
         """Handle model training and evaluation."""
-        # Get current table (subset or main)
-        table_name = self.main.working_table_name or self.main.current_table_name
-        if not table_name:
+        if not self.table_store.active_table_name:
             QMessageBox.warning(self.main, "No Data", 
                               "Please load a dataset first.")
             return
@@ -56,20 +65,21 @@ class ClassController:
         
         features = [item.text() for item in selected_items]
         
-        # Get data
-        table = self.main.warehouse.get_table(table_name)
+        # Get data from active table
+        table = self.table_store.get_active_table()
         
         # Prepare feature matrix X
         X_encoded = []
+        self.feature_encoders = {}
         for feature in features:
-            encoder = LabelEncoder(feature, self.main.warehouse.schema)
+            encoder = LabelEncoder(feature, self.table_store.schema)
             encoded_col = encoder.transform(table.df[feature])
             X_encoded.append(encoded_col)
             self.feature_encoders[feature] = encoder
         X = np.column_stack(X_encoded)
         
-        # Store y encoder
-        self.y_encoder = LabelEncoder('class', self.main.warehouse.schema)
+        # Prepare target y
+        self.y_encoder = LabelEncoder('class', self.table_store.schema)
         y = self.y_encoder.transform(table.df['class'])
         
         # Split data
@@ -93,6 +103,9 @@ class ClassController:
         # Update progress
         self.panel.progress.setValue(50)
         
+        # Store selected features
+        self.selected_features = features
+        
         # Evaluate
         train_acc = self.classifier.score(X_train, y_train)
         test_acc = self.classifier.score(X_test, y_test)
@@ -101,11 +114,20 @@ class ClassController:
         while self.panel.results_form.rowCount() > 0:
             self.panel.results_form.removeRow(0)
             
-        self.panel.results_form.addRow("Training Accuracy:", QLabel(f"{train_acc*100:.1f}%"))                            
-        self.panel.results_form.addRow("Test Accuracy:", QLabel(f"{test_acc*100:.1f}%"))                
-        self.panel.results_form.addRow("Number of Training Samples:", QLabel(str(len(X_train))))                    
-        self.panel.results_form.addRow("Number of Test Samples:", QLabel(str(len(X_test))))
-                                     
+        self.panel.results_form.addRow("Training Accuracy:", 
+                                     QLabel(f"{train_acc*100:.1f}%"))
+        self.panel.results_form.addRow("Test Accuracy:", 
+                                     QLabel(f"{test_acc*100:.1f}%"))
+        self.panel.results_form.addRow("Number of Training Samples:", 
+                                     QLabel(str(len(X_train))))
+        self.panel.results_form.addRow("Number of Test Samples:", 
+                                     QLabel(str(len(X_test))))
+        
+        # Setup prediction inputs
+        self.panel.setup_prediction_inputs(features)
+        
+        # Enable save model button
+        self.panel.save_model_btn.setEnabled(True)
         
         # Complete progress
         self.panel.progress.setValue(100)
@@ -151,8 +173,8 @@ class ClassController:
         pred_idx = self.classifier.predict(X_pred)[0]
         pred_code = self.y_encoder.int_to_code[pred_idx]
         
-        # Show result with label
-        pred_label = self.main.warehouse.schema.column_defs['class'].labels[pred_code]
+        # Show result with label using schema from table_store
+        pred_label = self.main.table_store.schema.column_defs['class'].labels[pred_code]
         self.panel.predict_result.setText(pred_label)
         
         # Color code the result
