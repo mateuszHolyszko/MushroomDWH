@@ -8,12 +8,14 @@ if project_root not in sys.path:
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
-    QFormLayout, QLabel, QSizePolicy
+    QFormLayout, QLabel, QSizePolicy, QGroupBox
 )
+from PyQt5.QtCore import Qt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from src.stats.categorical_stats import categorical_stats
+from src.stats.correlation import categorical_correlation
 from src.core.table_store import TableStore
 
 class StatsPanel(QWidget):
@@ -26,8 +28,11 @@ class StatsPanel(QWidget):
 
     def init_ui(self):
         """Initialize the UI components."""
-        # Main layout: horizontal split
-        main_layout = QHBoxLayout(self)
+        # Main layout is now vertical
+        main_layout = QVBoxLayout(self)
+
+        # Upper section: stats and histogram (horizontal)
+        upper_section = QHBoxLayout()
 
         # Left side: controls + form
         left = QVBoxLayout()
@@ -46,11 +51,45 @@ class StatsPanel(QWidget):
         self.canvas = FigureCanvas(self.fig)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        main_layout.addLayout(left, 1)
-        main_layout.addWidget(self.canvas, 2)
+        # Add left and right to upper section
+        upper_section.addLayout(left, 1)
+        upper_section.addWidget(self.canvas, 2)
+
+        # Add upper section to main layout
+        main_layout.addLayout(upper_section)
 
         # Connect signals
         self.compute_btn.clicked.connect(self.on_compute)
+
+        # Lower section: correlation
+        self.corr_group = QGroupBox("Correlation Analysis")
+        corr_layout = QVBoxLayout()
+        
+        # Column selection
+        col_select = QHBoxLayout()
+        self.col1_combo = QComboBox()
+        self.col2_combo = QComboBox()
+        col_select.addWidget(QLabel("Column 1:"))
+        col_select.addWidget(self.col1_combo)
+        col_select.addWidget(QLabel("Column 2:"))
+        col_select.addWidget(self.col2_combo)
+        
+        # Compute button
+        self.compute_corr_btn = QPushButton("Compute Correlation")
+        self.compute_corr_btn.clicked.connect(self.on_compute_correlation)
+        col_select.addWidget(self.compute_corr_btn)
+        
+        corr_layout.addLayout(col_select)
+        
+        # Results
+        self.corr_result = QLabel()
+        self.corr_result.setAlignment(Qt.AlignCenter)
+        corr_layout.addWidget(self.corr_result)
+        
+        self.corr_group.setLayout(corr_layout)
+        
+        # Add correlation group to main layout
+        main_layout.addWidget(self.corr_group)
 
     def set_table(self, table_name: str):
         """Update panel when active table changes."""
@@ -63,6 +102,15 @@ class StatsPanel(QWidget):
             table = self.table_store.get_active_table()
             self.column_picker.addItems(table.df.columns)
             self.compute_btn.setEnabled(True)
+            
+            # Update correlation combos
+            self.col1_combo.clear()
+            self.col2_combo.clear()
+            if table_name:
+                cols = list(self.table_store.get_active_table().df.columns)
+                self.col1_combo.addItems(cols)
+                self.col2_combo.addItems(cols)
+
         except (KeyError, ValueError) as e:
             self.compute_btn.setEnabled(False)
             print(f"Error setting table: {e}")
@@ -141,3 +189,30 @@ class StatsPanel(QWidget):
         
         self.fig.tight_layout()
         self.canvas.draw()
+
+    def on_compute_correlation(self):
+        """Handle correlation computation."""
+        if not self.table_store.active_table_name:
+            return
+            
+        col1 = self.col1_combo.currentText()
+        col2 = self.col2_combo.currentText()
+        
+        if col1 == col2:
+            self.corr_result.setText("Please select different columns")
+            return
+            
+        table = self.table_store.get_active_table()
+        corr, p_value = categorical_correlation(
+            table.df[col1],
+            table.df[col2],
+            self.table_store.schema
+        )
+        
+        # Display result with interpretation
+        strength = "weak" if corr < 0.3 else "moderate" if corr < 0.6 else "strong"
+        self.corr_result.setText(
+            f"Cramér's V: {corr:.3f}\n"
+            f"({strength} association)\n"
+            f"p-value: {p_value:.3e}"
+        )

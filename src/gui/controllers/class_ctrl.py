@@ -56,6 +56,16 @@ class ClassController:
                               "Please load a dataset first.")
             return
 
+         # Check if class column exists
+        table = self.table_store.get_active_table()
+        if 'class' not in table.df.columns:
+            QMessageBox.warning(
+                self.main, 
+                "Missing Class Column",
+                "The current dataset does not contain the 'class' column required for classification."
+            )
+            return
+
         # Get selected features
         selected_items = self.panel.feature_list.selectedItems()
         if not selected_items:

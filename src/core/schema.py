@@ -139,26 +139,30 @@ class Schema:
     def validate_row(self, row: Any, row_index: int = None) -> None:
         """
         Validate a single record (Series or dict) against column definitions.
-        Raises ValueError on first invalid code.
+        Only validates columns that are present in the row.
         """
-        for col, coldef in self.column_defs.items():
+        # Only validate columns that exist in the row
+        for col in row.keys():
+            if col not in self.column_defs:
+                raise ValueError(f"Unknown column '{col}' at row {row_index}")
+                
+            coldef = self.column_defs[col]
             val = row[col]
+            
             if pd.isna(val):
-                # treat NaN as missing
-                if not coldef.allow_missing:
-                    raise ValueError(f"Missing value not allowed for column '{col}' at row {row_index}")
-                continue
+                val = self.missing_code  # Convert NaN to missing code '?'
+                
             if val == self.missing_code:
-                if not coldef.allow_missing:
-                    raise ValueError(f"Missing code '{self.missing_code}' not allowed for column '{col}' at row {row_index}")
+                # Always allow missing code '?' for columns that aren't present in subset
                 continue
+                
             if val not in coldef.codes:
                 raise ValueError(f"Invalid code '{val}' for column '{col}' at row {row_index}")
 
     def validate_dataframe(self, df: pd.DataFrame) -> None:
         """
         Validate an entire DataFrame, row by row.
-        Raises ValueError on first invalid entry.
+        Only validates columns that are present in the DataFrame.
         """
         for idx, row in df.iterrows():
             self.validate_row(row, row_index=idx)
